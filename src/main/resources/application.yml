@@ -18,6 +18,12 @@ spring:
   h2:
     console:
       enabled: false
+  servlet:
+    multipart:
+      # 交车照片上传（rental-photo-1）：上限与 evops.photo.max-upload-size-bytes 对齐；
+      # 限额是否够用见 GET /api/orders/photo-boundaries（去年同期极端值）。
+      max-file-size: 10MB
+      max-request-size: 100MB
   sql:
     init:
       mode: always
@@ -68,6 +74,17 @@ evops:
     export-dir: data/telematics/export
     # 文件往来字符集（与对方规范一致，如对方要求 GBK 改此配置）
     charset: UTF-8
+  # 交车照片标识化（rental-photo-1）：原图仅留底，对外只给 280px 水印预览
+  photo:
+    storage-dir: data/handover-photos          # original/ 留底、preview/ 对外水印预览
+    preview-width: 280                          # 预览宽 px（小图不放大）
+    watermark-alpha: 0.30                       # 水印透明度 30%
+    jpeg-quality: 0.85
+    max-upload-size-bytes: 10485760             # 单张 10MB（对照去年同期极端值调整）
+    max-files-per-request: 9                    # 单次最多张数
+    core-pool-size: 2                           # 后台处理线程池
+    max-pool-size: 4
+    queue-capacity: 500
 
 logging:
   level:
