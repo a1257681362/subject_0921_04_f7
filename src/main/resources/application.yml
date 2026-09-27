@@ -6,6 +6,11 @@ spring:
     name: evops-base
   profiles:
     active: dev
+  servlet:
+    multipart:
+      # 交车照片上传（photo-1）：现场原图最大 20MB
+      max-file-size: 20MB
+      max-request-size: 20MB
   jackson:
     time-zone: Asia/Shanghai
     serialization:
@@ -68,6 +73,20 @@ evops:
     export-dir: data/telematics/export
     # 文件往来字符集（与对方规范一致，如对方要求 GBK 改此配置）
     charset: UTF-8
+  # 交车照片标识（photo-1）：上传只落原图+登记，摆正/缩放/水印在后台线程池处理。
+  # 对外只提供 280px 水印预览图（网点标识+订单号，透明度 30%），原图仅内部留存。
+  photo:
+    # 照片落盘根目录（按订单分目录：orig_<hash>.<ext> 原图 / preview_<hash>.jpg 预览图）
+    dir: data/photos
+    # 预览图最长边像素（Thumbnailator 缩放，小图不放大）
+    preview-size: 280
+    # 水印不透明度（0-1，0.30 = 30%）
+    watermark-opacity: 0.30
+    # 后台处理线程池：上传接口只登记即返回，处理在池内异步执行
+    executor:
+      core-size: 2
+      max-size: 4
+      queue-capacity: 200
 
 logging:
   level:

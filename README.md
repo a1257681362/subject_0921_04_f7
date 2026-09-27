@@ -327,3 +327,46 @@ SETTLED / ARCHIVED --REVERSE冲销(forward:false)--> REVERSED
 ### 测试
 
 `mvn test`：新增 8 个集成用例覆盖合法路径流转链（首尾相接/版本连续/交接关联/冲销原因）、越级拒绝不留痕、回退与终态拒绝、未知动作拒绝、交车不可走通用接口、并行 CAS 只有一个成功且败者回滚无半截历史、配置新增状态（HELD/INSPECTING）不改代码经通用接口流转、状态机视图。全量 47 个用例通过（含既有 9 个主流程用例零改动回归）。
+
+## 交车照片标识（photo-1）
+
+背景：上回抽查被点名——交车照片没加标识就对外了。本期把照片处理彻底理顺：**照片对外前必须带标识**（网点标识 + 订单号水印），处理放后台不卡上传，处理耗时可见，竖拍照片按 EXIF 方向摆正。
+
+### 处理链（上传与处理解耦）
+
+1. **上传** `POST /api/orders/{id}/photos`（multipart）：校验订单存在、文件可解码后，原图落盘 `data/photos/{orderId}/orig_<hash>.<ext>` 并登记 `t_handover_photo`（PENDING）即返回——**不卡上传**；
+2. **后台处理**（独立线程池 `evops.photo.executor`，队列满由调用线程兜底不丢任务）：读原图 → 按 EXIF 方向摆正 → Thumbnailator 缩放 280px 预览 → 叠加 30% 透明度水印（右下角，网点标识 + 订单号）→ 落盘 `preview_<hash>.jpg` → 回填状态与耗时；
+3. **对外出口唯一**：`GET /api/photos/{id}/preview` 只提供 280px 水印预览图；原图仅内部留存，不提供下载。
+
+### 口径与边界（对照去年同期租车单极端值设防）
+
+本工作区无去年同期生产数据（`data/` 为空库），边界按 schema 上限与成像领域极端设防，集成测试逐一覆盖：
+
+- **超长订单号**：`order_no` 上限 40 位顶满 → 水印字号逐号缩小（最小 8px）至不超出图宽 90%，仍能出图；
+- **未分派网点**：`branch_code` 可空 → 水印以 `NO-BRANCH` 占位（取 ASCII 网点编码而非中文名，避免服务器缺中文字体出方块）；
+- **竖拍照片**：EXIF 方向 1-8 全映射（手机竖拍多为 6/8），摆正后再缩放加水印；无 EXIF（如 PNG）不旋转；
+- **小图不放大**：不足 280px 的原图按原尺寸出预览（Thumbnailator `size()` 对小图默认放大，已显式规避）；
+- **坏图**：上传即校验可解码直接拒（409）；落盘后损坏的处理置 FAILED，失败原因与耗时落库，可 `POST /api/photos/{id}/retry` 重试（次数累计）；
+- **重复上传**：同一订单同一文件（SHA-256）幂等返回首次记录（`duplicate=true`），库层 `(order_id, file_hash)` 唯一约束兜底并发；
+- **单文件上限 20MB**（`spring.servlet.multipart.max-file-size`）；
+- **停机自愈**：启动时遗留 PENDING/PROCESSING 记录自动重投处理，失败不阻断启动。
+
+### 耗时可见
+
+每张照片的处理耗时（毫秒）落 `t_handover_photo.process_cost_ms`（完成/失败均回填），列表/详情接口可见，处理完成有 INFO 日志（含 EXIF 方向、是否摆正、耗时）。
+
+### 接口速览（新增）
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| POST | /api/orders/{id}/photos | 上传交车照片（multipart `file`），登记 PENDING 即返回，后台异步处理 |
+| GET | /api/orders/{id}/photos | 订单照片列表（状态/EXIF 方向/是否摆正/耗时/失败原因） |
+| GET | /api/photos/{id} | 照片处理详情 |
+| GET | /api/photos/{id}/preview | 下载对外预览图（280px、已摆正、30% 水印）；未完成 409 |
+| POST | /api/photos/{id}/retry | FAILED 重试（retry_count 累计） |
+
+写请求同样遵循三件套（`X-Operator` / `X-Request-No` / 可选 `X-Biz-Time`）与入口幂等。交车/还车主链路（pickup/return 的 `damagePhotos` 地址登记）不变，本模块独立成链。
+
+### 测试
+
+`mvn test`：新增 9 个集成用例覆盖上传即返回 PENDING 与异步置 DONE、耗时落库可见、EXIF 方向 6/8 摆正（色块位置断言）、无 EXIF 不旋转、小图不放大、水印痕迹校验、40 位超长订单号+空网点、非图片拒绝、坏图 FAILED 与重试计数、重复上传幂等、预览图未完成 409 与完成后下载一致。全量 56 个用例通过（既有 47 个用例零改动回归）。
